@@ -9,7 +9,6 @@
 #include <MQUnifiedsensor.h>
 SoftwareSerial Slave(10, 11);
 DHT dht(4, DHT11);
-char relayPin = 12; //继电器引脚
 #define placa "Arduino UNO"
 #define Voltage_Resolution 5
 #define pin A0 //Analog input 0 of your arduino
@@ -21,17 +20,10 @@ char relayPin = 12; //继电器引脚
 //Declare Sensor
 MQUnifiedsensor MQ135(placa, Voltage_Resolution, ADC_Bit_Resolution, pin, type);
 unsigned char body[2]={0};
-int tick = 0; //计数值
-
-void onTimer()
-{
-	digitalWrite(relayPin, LOW);
-	MsTimer2::stop(); //关闭定时器中断
-}
 
 void setup()
 {
-  pinMode(relayPin, OUTPUT);//定义数字接口12 为输出
+  delay(180000);
   Serial.begin(9600);
   pinMode(2,INPUT);    
   Serial.println("Slave is ready!");
@@ -52,10 +44,8 @@ void setup()
   
   if(isinf(calcR0)) {Serial.println("Warning: Conection issue founded, R0 is infite (Open circuit detected) please check your wiring and supply"); while(1);}
   if(calcR0 == 0){Serial.println("Warning: Conection issue founded, R0 is zero (Analog pin with short circuit to ground) please check your wiring and supply"); while(1);}
-  MsTimer2::set(10000, onTimer); //设置中断，每10000ms进入一次中断服务程序 onTimer()
   while(Serial.read()>= 0){}                 //清空串口0缓存
   while(Slave.read()>= 0){}               //清空串口1缓存
-  delay(180000);
 }
 
 void loop()
@@ -102,18 +92,7 @@ void loop()
         Slave.print(str);
        Serial.println(str); 
     }
-//    else
-//    break;
   }
-	if(body[0]!=body[1])
-	{
-		digitalWrite(relayPin, HIGH);
-		MsTimer2::start(); //开始计时_开启定时器中断
-	}
-	else
-	{
-		digitalWrite(relayPin, LOW);
-	}
   delay(80);
 
 }
