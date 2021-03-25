@@ -1,22 +1,15 @@
 #include <SoftwareSerial.h>
 #include <Wire.h>
 #include <math.h>
-#include <MsTimer2.h>		//定时器中断库
 SoftwareSerial Master(10, 11);
 
-#define 	lxVal_max 	1000
-
-int led = 13;
 int pinDelay = 4; //管脚D4连接到继电器模块的信号脚
-int flag_t=0;	//判断是否仍在计时
-int tick2 = 0; //计数值,测光照强度定时中断
+int lightDelay = 2;//管脚D2连接到pwm输出开关灯
 int tick1 = 0; //计数值，测臭味定时中断
-int BH1750address = 0x23;
-
+int tick2=0;   //开关灯
+int BH1750address = 0x23;//芯片地址为16位23
 byte buff[2];
-
-
-unsigned int val=0;
+uint16_t val=0;
 unsigned char Temperature=0,Humidity=0,Peoples=0,Csum=15;
 unsigned char Tn,Hn,Nn,Pn,Cn=0;
 unsigned int NH4=0;
@@ -28,6 +21,75 @@ unsigned char dst[70]={0};
 unsigned char src_con[30]={0};
 unsigned char num[10]={0x29,0x2a,0x2b,0x2c,0x2d,0x2e,0x2f,0x30,0x31,0x32};
 
+int BH1750_Read(int address) //
+{
+  int i=0;
+  Wire.beginTransmission(address);
+  Wire.requestFrom(address, 2);
+  while(Wire.available()) //
+  {
+    buff[i] = Wire.read();  // read one byte
+    i++;
+  }
+  Wire.endTransmission();  
+  return i;
+}
+void BH1750_Init(int address)
+{
+  Wire.beginTransmission(address);
+  Wire.write(0x10);//1lx reolution 120ms
+  Wire.endTransmission();
+}
+
+void BH1750()
+{
+  BH1750_Init(BH1750address);
+  delay(1800);
+  if(2==BH1750_Read(BH1750address))
+  {
+   val=((buff[0]<<8)|buff[1])/1.2;
+  }
+  delay(150);
+}
+
+void Time2_interrupts()//定时器1定时中断初始化
+{
+    //初始化
+  noInterrupts();         //禁用全局中断
+  TCCR2A = TCCR2A & B11111100;    //设置TCCR1A中WGN11和WGM10的值0，设置为模式0
+  TCCR2B = TCCR2B & B11110000;    //设置TCCR1B中CS12、CS11、CS10的值为0，关闭定时器计数器
+  TIMSK2 = TIMSK2 & B11111001;    //设置TIMSK1中OCIE1B和OCIE1A的值为0，
+  
+  //配置寄存器
+  OCR2A |= 124;      //设置初值 定时8ms
+  TCCR2A |= (1<<WGM21);
+  TCCR2B |= (1<<WGM22)|(1<<CS22)|(1<<CS21)|(1<<CS20) ;//预分频为1024
+  TIMSK2 |= (1<<OCIE2A);       //开启定时器中断
+  tick2 = 0;
+
+  //开启中断
+  interrupts();
+}
+
+ISR(TIMER2_COMPA_vect)
+{
+  tick2++;
+  if(tick2%75000==0)//10min
+  {
+    tick2=0;
+    if(val>30)
+    {
+      //关灯
+      digitalWrite(lightDelay, LOW);//输出LOW电平,继电器模块断开
+    }
+    else
+    {
+      //开灯
+      digitalWrite(lightDelay, HIGH);//输出HIGH电平,继电器模块闭合
+    } 
+  }
+}
+
 void Time1_interrupts(void)
 {
   //初始化
@@ -37,7 +99,7 @@ void Time1_interrupts(void)
   TIMSK1 = TIMSK1 & B11111001;    //设置TIMSK1中OCIE1B和OCIE1A的值为0，
   
   //配置寄存器
-  OCR1A = 15999;      //设置初值 32M/1Hz-1
+  OCR1A = 15624;      //设置初值 32M/1Hz-1  定时1s
   TCCR1B |= (1<<WGM12)|(1<<CS10)|(1<<CS12) ;//预分频为1024
   TIMSK1 |= (1<<OCIE1A);       //开启定时器中断
   tick1 = 0;
@@ -49,22 +111,21 @@ void Time1_interrupts(void)
 ISR(TIMER1_COMPA_vect)
 {
   tick1++;
-  if(tick1%300==0)//5分钟看一次臭味状况，决定是否打开排气扇
+  if(tick1%600==0)//10分钟看一次臭味状况，决定是否打开排气扇
   {
     tick1=0;
     //除臭，放在getdata后面或里面
     float nh4 = NH4/100.0;
-    //判断是否在计时中，还在计时则不进入判断
-      if(nh4>3.0)
-      {
-        //打开排风扇，延时5分钟,定时器计时
-        //打开继电器，定义继电器输入引脚为D3
-        digitalWrite(pinDelay, HIGH);//输出HIGH电平,继电器模块闭合
-      }
-      else
-      {
-        digitalWrite(pinDelay, LOW);//输出LOW电平,继电器模块断开
-      } 
+    if(nh4>4.0)
+    {
+      //打开排风扇，延时5分钟,定时器计时
+      //打开继电器，定义继电器输入引脚为D3
+      digitalWrite(pinDelay, LOW);//输出LOW电平,继电器模块断开
+    }
+    else
+    {
+      digitalWrite(pinDelay, HIGH);//输出HIGH电平,继电器模块闭合
+    } 
   }
 }
 
@@ -385,77 +446,17 @@ void sendData()  //num数据采集编号
   delay(100);
 }
 
-
-
-
-int BH1750_Read(int address)
-{
-	int i=0;
-	Wire.beginTransmission(address);
-	Wire.requestFrom(address, 2);
-	while(Wire.available())
-	{
-	  buff[i] = Wire.read();
-	  i++;
-	}
-	Wire.endTransmission();
-	return i;
-}
-
-void BH1750_Init(int address)
-{
-	Wire.beginTransmission(address);
-	Wire.write(0x10);
-	Wire.endTransmission();
-}
-
-//中断服务程序
-void onTimer()
-{
-  tick2++;
-  if(tick2==1800)		//隔半个小时测一次光照强度，改变灯光亮度
-  {
-    tick2=0;
-  	BH1750_Init(BH1750address);
-  	delay(200);
-  	if(2==BH1750_Read(BH1750address))
-  	{
-  	  val=((buff[0]<<8)|buff[1])/1.2;
-  	}
-  	
-  	if(val>lxVal_max)
-  	  val=lxVal_max;
-  	char a=((lxVal_max-val)*255)/lxVal_max;
-  	analogWrite(led,a);	
-  }
-}
-
-
 void setup()
 {
+  delay(180000);
   Time1_interrupts();//定时器1定时中断初始化
-  pinMode(led,OUTPUT);//定义数字接口13 为输出
+  Time2_interrupts();
   pinMode(pinDelay, OUTPUT); //设置pinRelay脚为输出状态
+  pinMode(lightDelay,OUTPUT);//设置light脚为输出状态
   Wire.begin();
   Serial.begin(9600);                         //初始化
   Serial.println("Master is ready!");
   Master.begin(9600);
-  MsTimer2::set(1000, onTimer); //设置中断，每1000ms进入一次中断服务程序 onTimer()
-  MsTimer2::start(); //开始计时_开启定时器中断
-  //MsTimer2::stop(); //关闭定时器中断
-
-  BH1750_Init(BH1750address);
-  delay(1000);
-  if(2==BH1750_Read(BH1750address))
-  {
-	val=((buff[0]<<8)|buff[1])/1.2;
-  }
-  Serial.print(val,DEC);     
-  Serial.println("[lx]"); 
-  if(val>lxVal_max)
-	  val=lxVal_max;
-  char a=((lxVal_max-val)*255)/lxVal_max;
-  analogWrite(led,a);
   while (Serial.read() >= 0) {}              //清空串口0缓存
   while (Master.read() >= 0) {}            //清空串口1缓存
 }
@@ -471,7 +472,7 @@ void loop()
     }
     address = i;
     Master.print(address);
-    delay(1800);
+    BH1750();
     String str = "";
     while(Master.available())
     { 
@@ -482,5 +483,5 @@ void loop()
     getData(i,str);
     sendData();
   }
-
+  
 }
